@@ -1,0 +1,154 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import sqlite3
+import threading
+from datetime import datetime
+import time
+
+class ToDoListApp:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("To-Do List App")
+        self.master.geometry("800x600")
+
+        self.conn = sqlite3.connect("todolist.db")
+        self.c = self.conn.cursor()
+        self.c.execute('''CREATE TABLE IF NOT EXISTS tarefas 
+                          (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                           descricao TEXT,
+                           data_vencimento TEXT,
+                           concluida INTEGER)''')
+        self.conn.commit()
+
+        self.frame_inserir = tk.Frame(master)
+        self.frame_inserir.pack(pady=10, padx=10, fill=tk.X)
+
+        self.frame_listar = tk.Frame(master)
+        self.frame_listar.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+
+        self.frame_botoes = tk.Frame(master)
+        self.frame_botoes.pack(pady=10, padx=10, fill=tk.X)
+
+        self.entrada_tarefa = tk.Entry(self.frame_inserir, width=50)
+        self.entrada_tarefa.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        self.botao_adicionar = tk.Button(self.frame_inserir, text="Adicionar", command=self.adicionar_tarefa)
+        self.botao_adicionar.pack(side=tk.LEFT, padx=5)
+
+        self.botao_remover = tk.Button(self.frame_botoes, text="Remover", command=self.remover_tarefa)
+        self.botao_remover.pack(side=tk.LEFT, padx=5)
+
+        self.botao_concluir = tk.Button(self.frame_botoes, text="Concluir", command=self.concluir_tarefa)
+        self.botao_concluir.pack(side=tk.LEFT, padx=5)
+
+        self.botao_limpar = tk.Button(self.frame_botoes, text="Limpar", command=self.limpar_tarefas)
+        self.botao_limpar.pack(side=tk.LEFT, padx=5)
+
+        self.botao_filtrar = tk.Button(self.frame_botoes, text="Filtrar", command=self.mostrar_filtro)
+        self.botao_filtrar.pack(side=tk.RIGHT, padx=5)
+
+        self.botao_ordenar = tk.Button(self.frame_botoes, text="Ordenar", command=self.ordenar_tarefas)
+        self.botao_ordenar.pack(side=tk.RIGHT, padx=5)
+
+        self.lista_tarefas = ttk.Treeview(self.frame_listar, columns=("Descrição", "Data de Vencimento", "Concluída"))
+        self.lista_tarefas.heading("#0", text="ID")
+        self.lista_tarefas.heading("Descrição", text="Descrição")
+        self.lista_tarefas.heading("Data de Vencimento", text="Data de Vencimento")
+        self.lista_tarefas.heading("Concluída", text="Concluída")
+        self.lista_tarefas.column("#0", width=50)
+        self.lista_tarefas.column("Descrição", width=200)
+        self.lista_tarefas.column("Data de Vencimento", width=150)
+        self.lista_tarefas.column("Concluída", width=100)
+        self.lista_tarefas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.scrollbar = ttk.Scrollbar(self.frame_listar, orient=tk.VERTICAL, command=self.lista_tarefas.yview)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.lista_tarefas.config(yscrollcommand=self.scrollbar.set)
+
+        self.carregar_tarefas()
+        self.verificar_tarefas_vencidas_thread()
+
+    def adicionar_tarefa(self):
+        descricao = self.entrada_tarefa.get()
+        if descricao:
+            data_vencimento = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            concluida = 0
+            self.c.execute("INSERT INTO tarefas (descricao, data_vencimento, concluida) VALUES (?, ?, ?)", (descricao, data_vencimento, concluida))
+            self.conn.commit()
+            self.carregar_tarefas()
+            self.entrada_tarefa.delete(0, tk.END)
+        else:
+            messagebox.showwarning("Atenção", "Por favor, insira uma tarefa.")
+
+    def remover_tarefa(self):
+        selected_item = self.lista_tarefas.selection()
+        if selected_item:
+            id_tarefa = self.lista_tarefas.item(selected_item)['text']
+            self.c.execute("DELETE FROM tarefas WHERE id=?", (id_tarefa,))
+            self.conn.commit()
+            self.carregar_tarefas()
+        else:
+            messagebox.showwarning("Atenção", "Por favor, selecione uma tarefa para remover.")
+
+    def concluir_tarefa(self):
+        selected_item = self.lista_tarefas.selection()
+        if selected_item:
+            id_tarefa = self.lista_tarefas.item(selected_item)['text']
+            self.c.execute("UPDATE tarefas SET concluida=1 WHERE id=?", (id_tarefa,))
+            self.conn.commit()
+            self.carregar_tarefas()
+        else:
+            messagebox.showwarning("Atenção", "Por favor, selecione uma tarefa para concluir.")
+
+    def limpar_tarefas(self):
+        self.c.execute("DELETE FROM tarefas")
+        self.conn.commit()
+        self.carregar_tarefas()
+
+    def carregar_tarefas(self):
+        self.lista_tarefas.delete(*self.lista_tarefas.get_children())
+        self.c.execute("SELECT * FROM tarefas")
+        tarefas = self.c.fetchall()
+        for tarefa in tarefas:
+            self.lista_tarefas.insert("", "end", text=tarefa[0], values=(tarefa[1], tarefa[2], "Sim" if tarefa[3] else "Não"))
+
+    def mostrar_filtro(self):
+        filtro = tk.Toplevel()
+        filtro.title("Filtrar Tarefas")
+
+        tk.Label(filtro, text="Digite o texto a ser filtrado:").pack(pady=5)
+        entrada_filtro = tk.Entry(filtro, width=50)
+        entrada_filtro.pack(pady=5)
+
+        def filtrar():
+            filtro_texto = entrada_filtro.get().lower()
+            self.lista_tarefas.delete(*self.lista_tarefas.get_children())
+            self.c.execute("SELECT * FROM tarefas")
+            tarefas = self.c.fetchall()
+            for tarefa in tarefas:
+                if filtro_texto in tarefa[1].lower():
+                    self.lista_tarefas.insert("", "end", text=tarefa[0], values=(tarefa[1], tarefa[2], "Sim" if tarefa[3] else "Não"))
+
+        botao_filtrar = tk.Button(filtro, text="Filtrar", command=filtrar)
+        botao_filtrar.pack(pady=5)
+
+    def ordenar_tarefas(self):
+        self.carregar_tarefas() 
+
+    def verificar_tarefas_vencidas_thread(self):
+        thread = threading.Thread(target=self.verificar_tarefas_vencidas)
+        thread.daemon = True
+        thread.start()
+
+    def verificar_tarefas_vencidas(self):
+        while True:
+            self.c.execute("SELECT * FROM tarefas WHERE data_vencimento <= ? AND concluida=0", (datetime.now().strftime('%Y-%m-%d %H:%M:%S'),))
+            tarefas_vencidas = self.c.fetchall()
+            for tarefa in tarefas_vencidas:
+                messagebox.showwarning("Tarefa Vencida", f"A tarefa '{tarefa[1]}' está vencida!")
+            time.sleep(60)
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ToDoListApp(root)
+    root.mainloop()
